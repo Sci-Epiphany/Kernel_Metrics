@@ -1,24 +1,32 @@
 import os
+
+import yaml
 from PIL import Image
 import torch
 import numpy as np
 import pandas as pd
+from tensorboard.compat.tensorflow_stub import string
+
 from utils.condition_function import AdaptBlurOperator
 from skimage.metrics import peak_signal_noise_ratio
 from skimage.metrics import structural_similarity
+from methods.visualization import draw_masked_flow, normalize_with_patch
 import logging
+import argparse
 
-# 配置路径和参数
-config = {
-    'blur_path': '/media/gsn/1208B30C08B2EE3B/WSN_Deblur/BID/blind-dps/results/adapt_blind_blur/input',
-    'gt_path': '/media/gsn/1208B30C08B2EE3B/WSN_Deblur/BID/blind-dps/results/adapt_blind_blur/label',
-    'test_kernel_path': 'results/blind_dps',
-    'save_path': 'results/blind_dps_reblur',
-    'ksize': 32,
-    'is_save': True
-}
+# Create an argument parser object
+parser = argparse.ArgumentParser(description='Evaluation arguments')
+parser.add_argument('--config', type=str, default='configs/reblur_blind_dps.yaml', help='Configs of reblur settings')
+parser.add_argument('--plt_flow',type=bool, default=True, help='Whether to plot flow')
 
-# 确保路径存在
+# Parse command line arguments
+args = parser.parse_args()
+
+# Read configuration file
+with open(args.config, 'r') as file:
+    config = yaml.safe_load(file)
+
+# Ensure paths exist
 if not os.path.exists(config['blur_path']):
     raise FileNotFoundError(f"blur_path does not exist: {config['blur_path']}")
 if not os.path.exists(config['gt_path']):
@@ -27,18 +35,21 @@ if not os.path.exists(config['gt_path']):
 if not os.path.exists(config['save_path']):
     os.makedirs(config['save_path'])
 
-# 日志配置
+if not os.path.exists(config['flow_save_path']):
+    os.makedirs(config['flow_save_path'])
+
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 
-# 设备设置
+# Set device
 device = torch.device('cuda')
 blur_operator = AdaptBlurOperator(device, ksize=config['ksize'])
 
 psnr_list = []
 ssim_list = []
-results = []  # 用于存储每个图像的结果
+results = []  # Store results for each image
 
-# 预处理所有图像路径
+# Preprocess all image paths
 kernel_paths = [os.path.join(config['test_kernel_path'], kernel_name) for kernel_name in
                 os.listdir(config['test_kernel_path']) if kernel_name.startswith('ker')]
 image_sp_names = [kernel_name.replace('ker', 'img') for kernel_name in os.listdir(config['test_kernel_path']) if
@@ -46,7 +57,7 @@ image_sp_names = [kernel_name.replace('ker', 'img') for kernel_name in os.listdi
 image_sp_paths = [os.path.join(config['gt_path'], image_sp_name) for image_sp_name in image_sp_names]
 blur_gt_paths = [os.path.join(config['blur_path'], image_sp_name) for image_sp_name in image_sp_names]
 
-# 处理每个测试核
+# Process each test kernel
 for kernel_path, image_sp_path, blur_gt_path in zip(kernel_paths, image_sp_paths, blur_gt_paths):
     try:
         kernel_test = Image.open(kernel_path)
@@ -73,9 +84,9 @@ for kernel_path, image_sp_path, blur_gt_path in zip(kernel_paths, image_sp_paths
     image_sp = (torch.from_numpy(image_sp).permute(2, 0, 1)
                 .unsqueeze(0).to(device)).to(torch.float32)
 
-    # 应用模糊算子
+    # Apply blur operator
     reblurred_image = blur_operator.forward(image_sp, kernel_test)
-    # 保存重新模糊的图像
+    # Save the reblurred image
     reblurred_image_np = reblurred_image.squeeze().cpu().numpy().transpose(1, 2, 0)
 
     try:
@@ -93,6 +104,13 @@ for kernel_path, image_sp_path, blur_gt_path in zip(kernel_paths, image_sp_paths
     psnr = peak_signal_noise_ratio(blur_gt, reblurred_image_np)
     ssim = structural_similarity(blur_gt, reblurred_image_np, data_range=blur_gt.max() - blur_gt.min(), multichannel=True, channel_axis=-1)
     if not np.isnan(psnr) and not np.isnan(ssim):
+        if args.plt_flow:
+            kernel_test = kernel_test.squeeze().cpu().numpy()
+            kernel_test_np = normalize_with_patch(kernel_test[0, :, :])
+            flow = draw_masked_flow(blur_gt.astype(np.float32), kernel_test_np)
+            flow = Image.fromarray(flow)
+            flow.save(os.path.join(config['flow_save_path'], f"flow_{os.path.basename(kernel_path)}"))
+
         psnr_list.append(psnr)
         ssim_list.append(ssim)
         results.append({
@@ -109,7 +127,7 @@ for kernel_path, image_sp_path, blur_gt_path in zip(kernel_paths, image_sp_paths
         reblurred_image_pil = Image.fromarray(reblurred_image_np)
         reblurred_image_pil.save(os.path.join(config['save_path'], f"reblurred_{os.path.basename(kernel_path)}"))
 
-# 创建 DataFrame 并保存为 CSV 文件
+# Create DataFrame and save as CSV file
 df_results = pd.DataFrame(results)
 csv_save_path = os.path.join(config['save_path'], 'results.csv')
 df_results.to_csv(csv_save_path, index=False)

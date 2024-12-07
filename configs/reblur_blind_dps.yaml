@@ -1,0 +1,7 @@
+blur_path: /media/gsn/1208B30C08B2EE3B/WSN_Deblur/BID/blind-dps/results/adapt_blind_blur/input
+gt_path: /media/gsn/1208B30C08B2EE3B/WSN_Deblur/BID/blind-dps/results/adapt_blind_blur/label
+test_kernel_path: results/blind_dps
+save_path: results/blind_dps_reblur
+flow_save_path: results/blind_dps_flow
+ksize: 32
+is_save: true
