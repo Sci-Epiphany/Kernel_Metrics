@@ -18,6 +18,7 @@ import argparse
 parser = argparse.ArgumentParser(description='Evaluation arguments')
 parser.add_argument('--config', type=str, default='configs/reblur_blind_dps.yaml', help='Configs of reblur settings')
 parser.add_argument('--plt_flow',type=bool, default=True, help='Whether to plot flow')
+parser.add_argument('--plt_gt_flow',type=bool, default=False, help='Whether to plot ground truth flow')
 
 # Parse command line arguments
 args = parser.parse_args()
@@ -54,11 +55,14 @@ kernel_paths = [os.path.join(config['test_kernel_path'], kernel_name) for kernel
                 os.listdir(config['test_kernel_path']) if kernel_name.startswith('ker')]
 image_sp_names = [kernel_name.replace('ker', 'img') for kernel_name in os.listdir(config['test_kernel_path']) if
                   kernel_name.startswith('ker')]
+kernel_gt_names = [kernel_name for kernel_name in os.listdir(config['test_kernel_path']) if
+                  kernel_name.startswith('ker')]
+kernel_gt_paths = [os.path.join(config['gt_path'], kernel_gt_name) for kernel_gt_name in kernel_gt_names]
 image_sp_paths = [os.path.join(config['gt_path'], image_sp_name) for image_sp_name in image_sp_names]
 blur_gt_paths = [os.path.join(config['blur_path'], image_sp_name) for image_sp_name in image_sp_names]
 
 # Process each test kernel
-for kernel_path, image_sp_path, blur_gt_path in zip(kernel_paths, image_sp_paths, blur_gt_paths):
+for kernel_path, image_sp_path, kernel_gt_path, blur_gt_path in zip(kernel_paths, image_sp_paths, kernel_gt_paths, blur_gt_paths):
     try:
         kernel_test = Image.open(kernel_path)
     except (IOError, OSError) as e:
@@ -110,6 +114,21 @@ for kernel_path, image_sp_path, blur_gt_path in zip(kernel_paths, image_sp_paths
             flow = draw_masked_flow(blur_gt.astype(np.float32), kernel_test_np)
             flow = Image.fromarray(flow)
             flow.save(os.path.join(config['flow_save_path'], f"flow_{os.path.basename(kernel_path)}"))
+        if args.plt_gt_flow:
+            try:
+                kernel_gt = Image.open(kernel_gt_path)
+            except (IOError, OSError) as e:
+                logging.error(f"Failed to open sharp image file: {kernel_gt_path}. Error: {e}")
+                continue
+
+            if kernel_gt.mode == 'L' or kernel_gt.mode == 'RGBA':
+                kernel_gt = kernel_gt.convert('RGB')
+
+            kernel_gt = np.array(kernel_gt) / 255.
+            kernel_gt_np = normalize_with_patch(kernel_gt[:, :, 0])
+            flow = draw_masked_flow(blur_gt.astype(np.float32), kernel_gt_np)
+            flow = Image.fromarray(flow)
+            flow.save(os.path.join(config['flow_save_path'], f"gt_flow_{os.path.basename(kernel_path)}"))
 
         psnr_list.append(psnr)
         ssim_list.append(ssim)
