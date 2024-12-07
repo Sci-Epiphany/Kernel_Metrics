@@ -1,3 +1,3 @@
 # Kernel_Metrics
-## Compared Metric Kits for Spatially-variant Kernels
+## Metrics for comparing spatial variation kernels
 ### Reblur method
